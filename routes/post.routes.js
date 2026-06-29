@@ -1,21 +1,24 @@
 import express from "express";
 import {
   createPost,
-  getPosts,
+  getAll,
   getPostById,
   updatePost,
   deletePost,
-  toggleLike,
+  likePost,
+  dislikePost,
 } from "../controllers/post.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
+import { upload } from "../utilities/upload.middleware.js";
 
 const router = express.Router();
 
-router.get("/", getPosts);
+router.get("/", getAll);
 router.get("/:id", getPostById);
-router.post("/", protect, createPost);
-router.put("/:id", protect, updatePost);
+router.post("/", protect, upload.single("image"), createPost);
+router.put("/:id", protect, upload.single("image"), updatePost);
 router.delete("/:id", protect, deletePost);
-router.post("/:id/like", protect, toggleLike);
+router.post("/:id/like", protect, likePost);
+router.post("/:id/dislike", protect, dislikePost);
 
 export default router;

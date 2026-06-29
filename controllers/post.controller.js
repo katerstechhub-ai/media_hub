@@ -1,76 +1,113 @@
+import cloudinary from "../config/cloudinary.js";
 import { Post } from "../models/post.model.js";
 
 export const createPost = async (req, res) => {
   try {
-    const { title, content, coverImage, tags } = req.body;
+    const { title, content, image, tags } = req.body;
+
+    let imageData = { url: "", public_id: null };
+
+    if (req.file) {
+      const base64 = req.file.buffer.toString("base64");
+      const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+      const result = await cloudinary.uploader.upload(dataUri, { folder: "mediahub" });
+      imageData = { url: result.secure_url, public_id: result.public_id };
+    } else if (image) {
+      imageData = { url: image, public_id: null };
+    }
 
     const post = await Post.create({
       title,
       content,
-      coverImage,
+      image: imageData,
       tags,
-      author: req.userId,
+      author: req.user._id,
     });
 
-    res.status(201).json(post);
+    res.status(201).json({ success: true, data: post });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-export const getPosts = async (req, res) => {
+export const getAll = async (req, res) => {
   try {
-    const posts = await Post.find()
-      .populate("author", "name avatar")
-      .populate("tags", "name")
-      .sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
 
-    res.status(200).json(posts);
+    const filter = {};
+    if (req.query.tag) filter.tags = req.query.tag;
+
+    const [posts, total] = await Promise.all([
+      Post.find(filter)
+        .populate("author", "name email avatar")
+        .populate("tags", "name")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Post.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      count: posts.length,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      data: posts,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
 export const getPostById = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
-      .populate("author", "name avatar")
+      .populate("author", "name email avatar")
       .populate("tags", "name");
 
     if (!post) {
-      return res.status(404).json({ message: "Post not found" });
+      return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    res.status(200).json(post);
+    res.status(200).json({ success: true, data: post });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
 export const updatePost = async (req, res) => {
   try {
+    const { title, content, image, tags } = req.body;
     const post = await Post.findById(req.params.id);
 
     if (!post) {
-      return res.status(404).json({ message: "Post not found" });
+      return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    if (post.author.toString() !== req.userId) {
-      return res.status(403).json({ message: "Not authorized to edit this post" });
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: "Not authorized to edit this post" });
     }
-
-    const { title, content, coverImage, tags } = req.body;
 
     if (title) post.title = title;
     if (content) post.content = content;
-    if (coverImage) post.coverImage = coverImage;
     if (tags) post.tags = tags;
 
-    await post.save();
+    if (req.file) {
+      const base64 = req.file.buffer.toString("base64");
+      const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+      const result = await cloudinary.uploader.upload(dataUri, { folder: "mediahub" });
+      post.image = { url: result.secure_url, public_id: result.public_id };
+    } else if (image) {
+      post.image = { url: image, public_id: null };
+    }
 
-    res.status(200).json(post);
+    const updatedPost = await post.save();
+    res.status(200).json({ success: true, data: updatedPost });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -79,41 +116,62 @@ export const deletePost = async (req, res) => {
     const post = await Post.findById(req.params.id);
 
     if (!post) {
-      return res.status(404).json({ message: "Post not found" });
+      return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    if (post.author.toString() !== req.userId) {
-      return res.status(403).json({ message: "Not authorized to delete this post" });
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: "Not authorized to delete this post" });
     }
 
     await post.deleteOne();
-
-    res.status(200).json({ message: "Post deleted" });
+    res.status(200).json({ success: true, message: "Post deleted successfully" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-export const toggleLike = async (req, res) => {
+export const likePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
-
     if (!post) {
-      return res.status(404).json({ message: "Post not found" });
+      return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    const alreadyLiked = post.likes.includes(req.userId);
+    const userId = req.user._id.toString();
 
-    if (alreadyLiked) {
-      post.likes.pull(req.userId);
-    } else {
-      post.likes.push(req.userId);
+    if (post.likes.some((id) => id.toString() === userId)) {
+      return res.status(400).json({ success: false, message: "You already liked this post" });
     }
 
-    await post.save();
+    post.dislikes = post.dislikes.filter((id) => id.toString() !== userId);
+    post.likes.push(req.user._id);
 
-    res.status(200).json({ likesCount: post.likes.length, liked: !alreadyLiked });
+    const updatedPost = await post.save();
+    res.status(200).json({ success: true, message: "Post liked", data: updatedPost });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const dislikePost = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    const userId = req.user._id.toString();
+
+    if (post.dislikes.some((id) => id.toString() === userId)) {
+      return res.status(400).json({ success: false, message: "You already disliked this post" });
+    }
+
+    post.likes = post.likes.filter((id) => id.toString() !== userId);
+    post.dislikes.push(req.user._id);
+
+    const updatedPost = await post.save();
+    res.status(200).json({ success: true, message: "Post disliked", data: updatedPost });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
