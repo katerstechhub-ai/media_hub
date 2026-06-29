@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
 import { env } from "../config/env.js";
+import cloudinary from "../config/cloudinary.js";
 
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, env.jwtAccessSecret, { expiresIn: "7d" });
@@ -103,5 +104,48 @@ export const search = async (req, res) => {
     res.status(200).json({ success: true, count: users.length, data: users });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+export const getMe = async (req, res) => {
+  res.status(200).json({ success: true, data: req.user });
+};
+
+export const updateProfile = async (req, res) => {
+  try {
+    const { name, bio } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (name) user.name = name;
+    if (bio !== undefined) user.bio = bio;
+
+    await user.save();
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Uploads req.file (field name "avatar") to Cloudinary and saves the URL on the user
+export const updateAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    const base64 = req.file.buffer.toString("base64");
+    const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder: "mediahub/avatars",
+    });
+
+    const user = await User.findById(req.user._id);
+    user.avatar = result.secure_url;
+    await user.save();
+
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
