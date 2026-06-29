@@ -32,7 +32,7 @@ export const register = async (req, res) => {
       success: true,
       message: "User registered successfully",
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -71,7 +71,7 @@ export const login = async (req, res) => {
       success: true,
       message: "Login successful",
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -126,7 +126,6 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-// Uploads req.file (field name "avatar") to Cloudinary and saves the URL on the user
 export const updateAvatar = async (req, res) => {
   try {
     if (!req.file) {
