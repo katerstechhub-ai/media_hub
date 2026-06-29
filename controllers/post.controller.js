@@ -1,96 +1,266 @@
-import cloudinary from "../config/cloudinary.js"
-import { Post } from "../models/post.model.js"
+import { Post } from "../models/post.model.js";
+import { User } from "../models/user.model.js";
 
+// Create a post
 export const createPost = async (req, res) => {
   try {
-    console.log('=== CREATE POST ===')
-    console.log('Body:', req.body)
-    console.log('File:', req.file ? {
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size
-    } : 'No file')
-    console.log('User:', req.user?._id)
-
-    const { title, content, tags } = req.body
-
-    // Validate
-    if (!title && !content && !req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Please provide title, content, or an image" 
-      })
-    }
-
-    let imageData = { url: "", public_id: null }
-
-    // Upload to Cloudinary if file exists
-    if (req.file) {
-      try {
-        // Convert buffer to base64
-        const base64 = req.file.buffer.toString("base64")
-        const dataUri = `data:${req.file.mimetype};base64,${base64}`
-        
-        console.log('Uploading to Cloudinary...')
-        
-        const result = await cloudinary.uploader.upload(dataUri, {
-          folder: "mediahub",
-          use_filename: true,
-          unique_filename: true,
-          transformation: [
-            { quality: "auto:good" },
-            { fetch_format: "auto" }
-          ]
-        })
-        
-        console.log('Cloudinary upload successful:', result.secure_url)
-        imageData = {
-          url: result.secure_url,
-          public_id: result.public_id
-        }
-      } catch (cloudinaryError) {
-        console.error('Cloudinary upload error:', cloudinaryError)
-        return res.status(400).json({
-          success: false,
-          message: `Cloudinary error: ${cloudinaryError.message}`
-        })
-      }
-    }
-
-    // Parse tags
-    let parsedTags = []
-    if (tags) {
-      if (Array.isArray(tags)) {
-        parsedTags = tags
-      } else if (typeof tags === 'string') {
-        try {
-          parsedTags = JSON.parse(tags)
-        } catch {
-          parsedTags = tags.split(',').map(t => t.trim()).filter(Boolean)
-        }
-      }
-    }
-
-    // Create post
+    const { title, content, tags, image } = req.body;
+    
     const post = await Post.create({
-      title: title || '',
-      content: content || '',
-      image: imageData,
-      tags: parsedTags,
+      title,
+      content,
+      tags: tags || [],
+      image: image || null,
       author: req.user._id,
-    })
-
-    console.log('Post created successfully:', post._id)
+    });
 
     res.status(201).json({
       success: true,
-      data: post
-    })
+      data: post,
+    });
   } catch (error) {
-    console.error('Create post error:', error)
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create post'
-    })
+    console.error("Create post error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
-}
+};
+
+// Get all posts
+export const getPosts = async (req, res) => {
+  try {
+    const posts = await Post.find()
+      .populate("author", "name avatar")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: posts.length,
+      data: posts,
+    });
+  } catch (error) {
+    console.error("Get posts error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get single post
+export const getPost = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id)
+      .populate("author", "name avatar");
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: post,
+    });
+  } catch (error) {
+    console.error("Get post error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Update post
+export const updatePost = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    // Check if user is the author
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: "Not authorized to update this post" });
+    }
+
+    const { title, content, tags, image } = req.body;
+    if (title) post.title = title;
+    if (content) post.content = content;
+    if (tags) post.tags = tags;
+    if (image) post.image = image;
+
+    await post.save();
+
+    res.status(200).json({
+      success: true,
+      data: post,
+    });
+  } catch (error) {
+    console.error("Update post error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Delete post - MAKE SURE THIS IS EXPORTED
+export const deletePost = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    // Check if user is the author
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: "Not authorized to delete this post" });
+    }
+
+    await post.deleteOne();
+
+    res.status(200).json({
+      success: true,
+      message: "Post deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete post error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Like a post
+export const likePost = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    const userId = req.user._id;
+    const alreadyLiked = post.likes.includes(userId);
+
+    if (alreadyLiked) {
+      post.likes = post.likes.filter(id => id.toString() !== userId.toString());
+    } else {
+      post.likes.push(userId);
+    }
+
+    await post.save();
+
+    res.status(200).json({
+      success: true,
+      liked: !alreadyLiked,
+      likes: post.likes.length,
+    });
+  } catch (error) {
+    console.error("Like post error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Unlike a post
+export const unlikePost = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    const userId = req.user._id;
+    post.likes = post.likes.filter(id => id.toString() !== userId.toString());
+    await post.save();
+
+    res.status(200).json({
+      success: true,
+      liked: false,
+      likes: post.likes.length,
+    });
+  } catch (error) {
+    console.error("Unlike post error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Add comment
+export const addComment = async (req, res) => {
+  try {
+    const { text } = req.body;
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    if (!text) {
+      return res.status(400).json({ success: false, message: "Comment text is required" });
+    }
+
+    const comment = {
+      user: req.user._id,
+      text,
+      createdAt: new Date(),
+    };
+
+    post.comments.push(comment);
+    await post.save();
+
+    res.status(201).json({
+      success: true,
+      data: comment,
+    });
+  } catch (error) {
+    console.error("Add comment error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Delete comment
+export const deleteComment = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    const commentIndex = post.comments.findIndex(
+      c => c._id.toString() === req.params.commentId
+    );
+
+    if (commentIndex === -1) {
+      return res.status(404).json({ success: false, message: "Comment not found" });
+    }
+
+    // Check if user is the comment author or post author
+    const comment = post.comments[commentIndex];
+    if (
+      comment.user.toString() !== req.user._id.toString() &&
+      post.author.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ success: false, message: "Not authorized to delete this comment" });
+    }
+
+    post.comments.splice(commentIndex, 1);
+    await post.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Comment deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete comment error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get my posts
+export const getMyPosts = async (req, res) => {
+  try {
+    const posts = await Post.find({ author: req.user._id })
+      .populate("author", "name avatar")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: posts.length,
+      data: posts,
+    });
+  } catch (error) {
+    console.error("Get my posts error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
