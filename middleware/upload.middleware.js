@@ -1,12 +1,11 @@
-const multer = require('multer')
-const path = require('path')
+import multer from 'multer'
+import path from 'path'
 
-// Memory storage (since you're using buffer to convert to base64)
+// Memory storage for buffer access
 const storage = multer.memoryStorage()
 
-// File filter - only allow images
+// File filter
 const fileFilter = (req, file, cb) => {
-  // Allowed image types
   const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
   
   if (allowedTypes.includes(file.mimetype)) {
@@ -17,12 +16,10 @@ const fileFilter = (req, file, cb) => {
 }
 
 // Configure multer
-const upload = multer({
+export const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 5 * 1024 * 1024 // 5MB
   },
   fileFilter: fileFilter
 })
-
-module.exports = upload
