@@ -1,16 +1,67 @@
 import { Post } from "../models/post.model.js";
 import { User } from "../models/user.model.js";
+import cloudinary from "../config/cloudinary.js";
 
-// Create a post
+// Create a post (with optional image upload)
 export const createPost = async (req, res) => {
   try {
-    const { title, content, tags, image } = req.body;
+    console.log("Request body:", req.body);
+    console.log("Request file:", req.file);
     
+    // Get fields from req.body (multer parses these)
+    const { title, content, tags } = req.body;
+    
+    // Validate required fields
+    if (!title) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Title is required" 
+      });
+    }
+    
+    // Parse tags if they come as a string
+    let tagsArray = [];
+    if (tags) {
+      if (Array.isArray(tags)) {
+        tagsArray = tags;
+      } else if (typeof tags === 'string') {
+        tagsArray = tags.split(',').map(t => t.trim()).filter(Boolean);
+      }
+    }
+    
+    // Handle image upload to Cloudinary
+    let imageData = null;
+    if (req.file) {
+      try {
+        // Convert buffer to base64 for Cloudinary
+        const base64 = req.file.buffer.toString("base64");
+        const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+        
+        const result = await cloudinary.uploader.upload(dataUri, {
+          folder: "mediahub",
+        });
+        
+        imageData = {
+          url: result.secure_url,
+          public_id: result.public_id,
+        };
+        
+        console.log("Cloudinary upload successful:", imageData.url);
+      } catch (uploadError) {
+        console.error("Cloudinary upload error:", uploadError);
+        return res.status(500).json({
+          success: false,
+          message: "Image upload failed: " + uploadError.message,
+        });
+      }
+    }
+    
+    // Create the post
     const post = await Post.create({
       title,
-      content,
-      tags: tags || [],
-      image: image || null,
+      content: content || '',
+      tags: tagsArray,
+      image: imageData,
       author: req.user._id,
     });
 
@@ -76,11 +127,42 @@ export const updatePost = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to update this post" });
     }
 
-    const { title, content, tags, image } = req.body;
+    const { title, content, tags } = req.body;
+    
     if (title) post.title = title;
     if (content) post.content = content;
-    if (tags) post.tags = tags;
-    if (image) post.image = image;
+    if (tags) {
+      post.tags = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim()).filter(Boolean);
+    }
+
+    // Handle image update if a new image is uploaded
+    if (req.file) {
+      try {
+        // Delete old image from Cloudinary if exists
+        if (post.image && post.image.public_id) {
+          await cloudinary.uploader.destroy(post.image.public_id);
+        }
+        
+        // Upload new image
+        const base64 = req.file.buffer.toString("base64");
+        const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+        
+        const result = await cloudinary.uploader.upload(dataUri, {
+          folder: "mediahub",
+        });
+        
+        post.image = {
+          url: result.secure_url,
+          public_id: result.public_id,
+        };
+      } catch (uploadError) {
+        console.error("Cloudinary upload error:", uploadError);
+        return res.status(500).json({
+          success: false,
+          message: "Image upload failed: " + uploadError.message,
+        });
+      }
+    }
 
     await post.save();
 
@@ -94,7 +176,7 @@ export const updatePost = async (req, res) => {
   }
 };
 
-// Delete post - MAKE SURE THIS IS EXPORTED
+// Delete post
 export const deletePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -106,6 +188,16 @@ export const deletePost = async (req, res) => {
     // Check if user is the author
     if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Not authorized to delete this post" });
+    }
+
+    // Delete image from Cloudinary if exists
+    if (post.image && post.image.public_id) {
+      try {
+        await cloudinary.uploader.destroy(post.image.public_id);
+        console.log("Cloudinary image deleted:", post.image.public_id);
+      } catch (cloudinaryError) {
+        console.error("Cloudinary delete error:", cloudinaryError);
+      }
     }
 
     await post.deleteOne();
