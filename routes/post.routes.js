@@ -12,12 +12,14 @@ import {
   getMyPosts,
 } from "../controllers/post.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
+import { upload } from "../middleware/upload.middleware.js"; // ✅ ADD THIS
 
 const router = express.Router();
 
 router.use(protect);
 
-router.post("/", createPost);
+// ✅ ADD upload.single('image') here
+router.post("/", upload.single("image"), createPost);
 router.get("/", getPosts);
 router.get("/my-posts", getMyPosts);
 router.get("/:id", getPost);
