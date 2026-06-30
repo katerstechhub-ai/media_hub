@@ -30,9 +30,10 @@ const allowedOrigins = [
   'http://localhost:5174',
   'https://mediahub-frontend.vercel.app',
   'https://mediahub-frontend-git-main.vercel.app',
+  'https://mediahub-frontend-4tdp.vercel.app',                              // 👈 add
+  'https://mediahub-frontend-4tdp-5tn2f6fk7-katerstechhub-ais-projects.vercel.app', // 👈 add
   process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : [],
 ].flat();
-
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
