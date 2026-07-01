@@ -1,6 +1,7 @@
 import { Post } from "../models/post.model.js";
 import { User } from "../models/user.model.js";
 import cloudinary from "../config/cloudinary.js";
+import { createNotification } from "./notification.controller.js";
 
 // Create a post (with optional image upload)
 export const createPost = async (req, res) => {
@@ -8,10 +9,8 @@ export const createPost = async (req, res) => {
     console.log("Request body:", req.body);
     console.log("Request file:", req.file);
     
-    // Get fields from req.body (multer parses these)
     const { title, content, tags } = req.body;
     
-    // Validate required fields
     if (!title) {
       return res.status(400).json({ 
         success: false, 
@@ -19,7 +18,6 @@ export const createPost = async (req, res) => {
       });
     }
     
-    // Parse tags if they come as a string
     let tagsArray = [];
     if (tags) {
       if (Array.isArray(tags)) {
@@ -29,11 +27,9 @@ export const createPost = async (req, res) => {
       }
     }
     
-    // Handle image upload to Cloudinary
     let imageData = null;
     if (req.file) {
       try {
-        // Convert buffer to base64 for Cloudinary
         const base64 = req.file.buffer.toString("base64");
         const dataUri = `data:${req.file.mimetype};base64,${base64}`;
         
@@ -56,7 +52,6 @@ export const createPost = async (req, res) => {
       }
     }
     
-    // Create the post
     const post = await Post.create({
       title,
       content: content || '',
@@ -122,7 +117,6 @@ export const updatePost = async (req, res) => {
       return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    // Check if user is the author
     if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Not authorized to update this post" });
     }
@@ -135,15 +129,12 @@ export const updatePost = async (req, res) => {
       post.tags = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim()).filter(Boolean);
     }
 
-    // Handle image update if a new image is uploaded
     if (req.file) {
       try {
-        // Delete old image from Cloudinary if exists
         if (post.image && post.image.public_id) {
           await cloudinary.uploader.destroy(post.image.public_id);
         }
         
-        // Upload new image
         const base64 = req.file.buffer.toString("base64");
         const dataUri = `data:${req.file.mimetype};base64,${base64}`;
         
@@ -185,12 +176,10 @@ export const deletePost = async (req, res) => {
       return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    // Check if user is the author
     if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Not authorized to delete this post" });
     }
 
-    // Delete image from Cloudinary if exists
     if (post.image && post.image.public_id) {
       try {
         await cloudinary.uploader.destroy(post.image.public_id);
@@ -231,6 +220,15 @@ export const likePost = async (req, res) => {
     }
 
     await post.save();
+
+    if (!alreadyLiked) {
+      await createNotification({
+        recipient: post.author,
+        sender: req.user._id,
+        type: "like_post",
+        post: post._id,
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -317,7 +315,6 @@ export const deleteComment = async (req, res) => {
       return res.status(404).json({ success: false, message: "Comment not found" });
     }
 
-    // Check if user is the comment author or post author
     const comment = post.comments[commentIndex];
     if (
       comment.user.toString() !== req.user._id.toString() &&

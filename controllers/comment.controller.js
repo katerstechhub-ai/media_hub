@@ -1,5 +1,6 @@
 import { Comment } from "../models/comment.model.js";
 import { Post } from "../models/post.model.js";
+import { createNotification } from "./notification.controller.js";
 
 export const addComment = async (req, res) => {
   try {
@@ -19,6 +20,14 @@ export const addComment = async (req, res) => {
       content,
       post: postId,
       author: req.user._id,
+    });
+
+    await createNotification({
+      recipient: post.author,
+      sender: req.user._id,
+      type: "comment",
+      post: postId,
+      comment: comment._id,
     });
 
     res.status(201).json({ success: true, data: comment });
@@ -49,6 +58,14 @@ export const replyToComment = async (req, res) => {
 
     parentComment.replies.push(reply._id);
     await parentComment.save();
+
+    await createNotification({
+      recipient: parentComment.author,
+      sender: req.user._id,
+      type: "reply",
+      post: parentComment.post,
+      comment: reply._id,
+    });
 
     res.status(201).json({ success: true, data: reply });
   } catch (error) {
@@ -127,6 +144,13 @@ export const likeComment = async (req, res) => {
 
     comment.likes.push(req.user._id);
     const updatedComment = await comment.save();
+
+    await createNotification({
+      recipient: comment.author,
+      sender: req.user._id,
+      type: "like_comment",
+      comment: comment._id,
+    });
 
     res.status(200).json({ success: true, message: "Comment liked", data: updatedComment });
   } catch (error) {
