@@ -97,6 +97,8 @@ export const updateComment = async (req, res) => {
       return res.status(404).json({ success: false, message: "Comment not found" });
     }
 
+    // Only the comment's own author can edit it — post owners cannot edit
+    // other people's comments, only delete/moderate them (see deleteComment below).
     if (comment.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Not authorized to update this comment" });
     }
@@ -118,7 +120,14 @@ export const deleteComment = async (req, res) => {
       return res.status(404).json({ success: false, message: "Comment not found" });
     }
 
-    if (comment.author.toString() !== req.user._id.toString()) {
+    const post = await Post.findById(comment.post);
+
+    const isCommentAuthor = comment.author.toString() === req.user._id.toString();
+    const isPostOwner = post && post.author.toString() === req.user._id.toString();
+
+    // Allow deletion if you wrote the comment, OR you own the post it's on.
+    // You still cannot delete other people's comments on posts that aren't yours.
+    if (!isCommentAuthor && !isPostOwner) {
       return res.status(403).json({ success: false, message: "Not authorized to delete this comment" });
     }
 

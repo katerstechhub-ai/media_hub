@@ -7,6 +7,7 @@ import {
   deletePost,
   likePost,
   unlikePost,
+  getPostLikers,
   addComment,
   deleteComment,
   getMyPosts,
@@ -28,6 +29,7 @@ router.delete("/:id", deletePost);
 
 router.post("/:id/like", likePost);
 router.delete("/:id/like", unlikePost);
+router.get("/:id/likes", getPostLikers);
 
 router.post("/:id/comments", addComment);
 router.delete("/:id/comments/:commentId", deleteComment);

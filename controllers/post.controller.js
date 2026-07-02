@@ -265,6 +265,26 @@ export const unlikePost = async (req, res) => {
   }
 };
 
+// Get the list of users who liked a post (for the Likes page)
+export const getPostLikers = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id).populate("likes", "name avatar");
+
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      count: post.likes.length,
+      data: post.likes,
+    });
+  } catch (error) {
+    console.error("Get post likers error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // Add comment
 export const addComment = async (req, res) => {
   try {
