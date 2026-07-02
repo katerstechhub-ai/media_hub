@@ -2,8 +2,8 @@ import mongoose from "mongoose";
 
 const postSchema = new mongoose.Schema(
   {
-    title: { type: String, required: true },
-    content: { type: String, required: true },
+    title: { type: String, required: false },
+    content: { type: String, required: false },
     image: {
       url: { type: String, default: "" },
       public_id: { type: String, default: null },

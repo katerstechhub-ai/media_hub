@@ -8,16 +8,16 @@ export const createPost = async (req, res) => {
   try {
     console.log("Request body:", req.body);
     console.log("Request file:", req.file);
-    
+
     const { title, content, tags } = req.body;
-    
-    if (!title) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Title is required" 
+
+    if (!title?.trim() && !content?.trim() && !req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Add a title, some content, or an image",
       });
     }
-    
+
     let tagsArray = [];
     if (tags) {
       if (Array.isArray(tags)) {
@@ -26,22 +26,22 @@ export const createPost = async (req, res) => {
         tagsArray = tags.split(',').map(t => t.trim()).filter(Boolean);
       }
     }
-    
+
     let imageData = null;
     if (req.file) {
       try {
         const base64 = req.file.buffer.toString("base64");
         const dataUri = `data:${req.file.mimetype};base64,${base64}`;
-        
+
         const result = await cloudinary.uploader.upload(dataUri, {
           folder: "mediahub",
         });
-        
+
         imageData = {
           url: result.secure_url,
           public_id: result.public_id,
         };
-        
+
         console.log("Cloudinary upload successful:", imageData.url);
       } catch (uploadError) {
         console.error("Cloudinary upload error:", uploadError);
@@ -51,10 +51,10 @@ export const createPost = async (req, res) => {
         });
       }
     }
-    
+
     const post = await Post.create({
-      title,
-      content: content || '',
+      title: title?.trim() || '',
+      content: content?.trim() || '',
       tags: tagsArray,
       image: imageData,
       author: req.user._id,
@@ -122,7 +122,7 @@ export const updatePost = async (req, res) => {
     }
 
     const { title, content, tags } = req.body;
-    
+
     if (title) post.title = title;
     if (content) post.content = content;
     if (tags) {
@@ -134,14 +134,14 @@ export const updatePost = async (req, res) => {
         if (post.image && post.image.public_id) {
           await cloudinary.uploader.destroy(post.image.public_id);
         }
-        
+
         const base64 = req.file.buffer.toString("base64");
         const dataUri = `data:${req.file.mimetype};base64,${base64}`;
-        
+
         const result = await cloudinary.uploader.upload(dataUri, {
           folder: "mediahub",
         });
-        
+
         post.image = {
           url: result.secure_url,
           public_id: result.public_id,
