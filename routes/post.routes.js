@@ -17,13 +17,13 @@ import { upload } from "../middleware/upload.middleware.js"; // ✅ ADD THIS
 
 const router = express.Router();
 
-// ✅ Public routes — visible to guests (no login required)
+// Public reads — no auth required
 router.get("/", getPosts);
-router.get("/my-posts", protect, getMyPosts); // must stay above "/:id" or it gets swallowed by it
+router.get("/my-posts", protect, getMyPosts); // must come before /:id
 router.get("/:id", getPost);
 router.get("/:id/likes", getPostLikers);
 
-// ✅ Everything below requires a logged-in user
+// Mutating routes — require auth
 router.post("/", protect, upload.single("image"), createPost);
 router.put("/:id", protect, updatePost);
 router.delete("/:id", protect, deletePost);
