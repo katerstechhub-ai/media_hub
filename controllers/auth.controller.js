@@ -111,6 +111,23 @@ export const getMe = async (req, res) => {
   res.status(200).json({ success: true, data: req.user });
 };
 
+// ✅ Public profile view — safe for guests, only exposes non-sensitive fields
+export const getUserProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select(
+      "name avatar bio createdAt"
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const updateProfile = async (req, res) => {
   try {
     const { name, bio } = req.body;
