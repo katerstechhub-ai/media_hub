@@ -17,21 +17,21 @@ import { upload } from "../middleware/upload.middleware.js"; // ✅ ADD THIS
 
 const router = express.Router();
 
-// Public reads — no auth required
+router.use(protect);
+
+// Accept up to 5 images per post under the field name "images"
+router.post("/", upload.array("images", 5), createPost);
 router.get("/", getPosts);
-router.get("/my-posts", protect, getMyPosts); // must come before /:id
+router.get("/my-posts", getMyPosts);
 router.get("/:id", getPost);
+router.put("/:id", upload.array("images", 5), updatePost);
+router.delete("/:id", deletePost);
+
+router.post("/:id/like", likePost);
+router.delete("/:id/like", unlikePost);
 router.get("/:id/likes", getPostLikers);
 
-// Mutating routes — require auth
-router.post("/", protect, upload.single("image"), createPost);
-router.put("/:id", protect, updatePost);
-router.delete("/:id", protect, deletePost);
-
-router.post("/:id/like", protect, likePost);
-router.delete("/:id/like", protect, unlikePost);
-
-router.post("/:id/comments", protect, addComment);
-router.delete("/:id/comments/:commentId", protect, deleteComment);
+router.post("/:id/comments", addComment);
+router.delete("/:id/comments/:commentId", deleteComment);
 
 export default router;

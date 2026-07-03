@@ -80,6 +80,21 @@ app.get("/", (req, res) => {
   res.send("MediaHub API is running");
 });
 
+// Catch multer errors (bad field name, too many files, file too large, wrong type)
+// and anything else that reaches the default error handler, and return JSON instead
+// of Express's default HTML error page.
+app.use((err, req, res, next) => {
+  if (err && err.name === 'MulterError') {
+    console.error('Multer error:', err.code, err.message);
+    return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+  }
+  if (err) {
+    console.error('Unhandled error:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Internal Server Error' });
+  }
+  next();
+});
+
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);

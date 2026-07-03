@@ -7,11 +7,12 @@ import { createNotification } from "./notification.controller.js";
 export const createPost = async (req, res) => {
   try {
     console.log("Request body:", req.body);
-    console.log("Request file:", req.file);
+    console.log("Request files:", req.files);
 
     const { title, content, tags } = req.body;
+    const files = req.files || [];
 
-    if (!title?.trim() && !content?.trim() && !req.file) {
+    if (!title?.trim() && !content?.trim() && files.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Add a title, some content, or an image",
@@ -27,22 +28,23 @@ export const createPost = async (req, res) => {
       }
     }
 
-    let imageData = null;
-    if (req.file) {
+    let imagesData = [];
+    if (files.length > 0) {
       try {
-        const base64 = req.file.buffer.toString("base64");
-        const dataUri = `data:${req.file.mimetype};base64,${base64}`;
-
-        const result = await cloudinary.uploader.upload(dataUri, {
-          folder: "mediahub",
+        const uploads = files.map((file) => {
+          const base64 = file.buffer.toString("base64");
+          const dataUri = `data:${file.mimetype};base64,${base64}`;
+          return cloudinary.uploader.upload(dataUri, { folder: "mediahub" });
         });
 
-        imageData = {
+        const results = await Promise.all(uploads);
+
+        imagesData = results.map((result) => ({
           url: result.secure_url,
           public_id: result.public_id,
-        };
+        }));
 
-        console.log("Cloudinary upload successful:", imageData.url);
+        console.log("Cloudinary upload successful:", imagesData.map(i => i.url));
       } catch (uploadError) {
         console.error("Cloudinary upload error:", uploadError);
         return res.status(500).json({
@@ -56,7 +58,7 @@ export const createPost = async (req, res) => {
       title: title?.trim() || '',
       content: content?.trim() || '',
       tags: tagsArray,
-      image: imageData,
+      images: imagesData,
       author: req.user._id,
     });
 
@@ -129,23 +131,30 @@ export const updatePost = async (req, res) => {
       post.tags = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim()).filter(Boolean);
     }
 
-    if (req.file) {
+    const files = req.files || [];
+    if (files.length > 0) {
       try {
-        if (post.image && post.image.public_id) {
-          await cloudinary.uploader.destroy(post.image.public_id);
+        // Replacing images: remove the old ones from Cloudinary first
+        if (post.images && post.images.length > 0) {
+          await Promise.all(
+            post.images
+              .filter((img) => img.public_id)
+              .map((img) => cloudinary.uploader.destroy(img.public_id))
+          );
         }
 
-        const base64 = req.file.buffer.toString("base64");
-        const dataUri = `data:${req.file.mimetype};base64,${base64}`;
-
-        const result = await cloudinary.uploader.upload(dataUri, {
-          folder: "mediahub",
+        const uploads = files.map((file) => {
+          const base64 = file.buffer.toString("base64");
+          const dataUri = `data:${file.mimetype};base64,${base64}`;
+          return cloudinary.uploader.upload(dataUri, { folder: "mediahub" });
         });
 
-        post.image = {
+        const results = await Promise.all(uploads);
+
+        post.images = results.map((result) => ({
           url: result.secure_url,
           public_id: result.public_id,
-        };
+        }));
       } catch (uploadError) {
         console.error("Cloudinary upload error:", uploadError);
         return res.status(500).json({
@@ -180,10 +189,14 @@ export const deletePost = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to delete this post" });
     }
 
-    if (post.image && post.image.public_id) {
+    if (post.images && post.images.length > 0) {
       try {
-        await cloudinary.uploader.destroy(post.image.public_id);
-        console.log("Cloudinary image deleted:", post.image.public_id);
+        await Promise.all(
+          post.images
+            .filter((img) => img.public_id)
+            .map((img) => cloudinary.uploader.destroy(img.public_id))
+        );
+        console.log("Cloudinary images deleted:", post.images.map(i => i.public_id));
       } catch (cloudinaryError) {
         console.error("Cloudinary delete error:", cloudinaryError);
       }
