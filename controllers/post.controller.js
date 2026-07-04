@@ -1,5 +1,6 @@
 import { Post } from "../models/post.model.js";
 import { User } from "../models/user.model.js";
+import { Comment } from "../models/comment.model.js";
 import cloudinary from "../config/cloudinary.js";
 import { createNotification } from "./notification.controller.js";
 
@@ -77,12 +78,28 @@ export const getPosts = async (req, res) => {
   try {
     const posts = await Post.find()
       .populate("author", "name avatar")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // One aggregate query for ALL posts' comment counts at once, instead of
+    // making the frontend fire a separate /api/comments/:postId request per
+    // post just to show a count. This is the main fix for feed load speed.
+    const postIds = posts.map((p) => p._id);
+    const counts = await Comment.aggregate([
+      { $match: { post: { $in: postIds } } },
+      { $group: { _id: "$post", count: { $sum: 1 } } },
+    ]);
+    const countMap = new Map(counts.map((c) => [String(c._id), c.count]));
+
+    const postsWithCounts = posts.map((p) => ({
+      ...p,
+      commentCount: countMap.get(String(p._id)) || 0,
+    }));
 
     res.status(200).json({
       success: true,
-      count: posts.length,
-      data: posts,
+      count: postsWithCounts.length,
+      data: postsWithCounts,
     });
   } catch (error) {
     console.error("Get posts error:", error);
