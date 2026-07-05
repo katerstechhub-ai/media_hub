@@ -77,7 +77,7 @@ export const createPost = async (req, res) => {
 export const getPosts = async (req, res) => {
   try {
     const posts = await Post.find()
-      .populate("author", "name avatar")
+      .populate("author", "name avatar createdAt")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -111,7 +111,7 @@ export const getPosts = async (req, res) => {
 export const getPost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
-      .populate("author", "name avatar");
+      .populate("author", "name avatar createdAt");
 
     if (!post) {
       return res.status(404).json({ success: false, message: "Post not found" });
@@ -390,7 +390,7 @@ export const deleteComment = async (req, res) => {
 export const getMyPosts = async (req, res) => {
   try {
     const posts = await Post.find({ author: req.user._id })
-      .populate("author", "name avatar")
+      .populate("author", "name avatar createdAt")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
