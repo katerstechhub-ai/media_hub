@@ -1,21 +1,21 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { env } from "../config/env.js";
 
-const transporter = nodemailer.createTransport({
-  host: env.smtpHost,
-  port: env.smtpPort,
-  secure: Number(env.smtpPort) === 465,
-  auth: {
-    user: env.smtpUser,
-    pass: env.smtpPass,
-  },
-});
+const resend = new Resend(env.resendApiKey);
 
 export const sendEmail = async ({ to, subject, html }) => {
-  await transporter.sendMail({
-    from: env.smtpFrom || env.smtpUser,
+  if (!env.resendApiKey) {
+    throw new Error("RESEND_API_KEY is not set — email sending is disabled.");
+  }
+
+  const { error } = await resend.emails.send({
+    from: "MediaHub <onboarding@resend.dev>",
     to,
     subject,
     html,
   });
+
+  if (error) {
+    throw new Error(error.message || "Resend failed to send email");
+  }
 };

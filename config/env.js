@@ -28,9 +28,9 @@ export const env = {
   cloudinaryApiSecret: required("CLOUD_API_SECRET"),
   cloudinaryCloudName: required("CLOUD_NAME"),
 
-  smtpHost: process.env.SMTP_HOST,
-  smtpPort: process.env.SMTP_PORT || 587,
-  smtpUser: process.env.SMTP_USER,
-  smtpPass: process.env.SMTP_PASS,
-  smtpFrom: process.env.SMTP_FROM || process.env.SMTP_USER,
+  // Not using `required(...)` here on purpose — if RESEND_API_KEY isn't set
+  // yet, the server should still boot fine. sendEmail() will just fail at
+  // the moment someone actually requests a password reset, instead of
+  // crashing the whole app on startup.
+  resendApiKey: process.env.RESEND_API_KEY,
 };
