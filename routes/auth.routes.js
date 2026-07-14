@@ -9,6 +9,8 @@ import {
   updateProfile,
   updateAvatar,
   changePassword,
+  forgotPassword,
+  resetPassword,
   deleteAccount,
 } from "../controllers/auth.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
@@ -26,6 +28,8 @@ router.get("/users/:id", getUserProfile);
 router.put("/me", protect, updateProfile);
 router.put("/me/avatar", protect, upload.single("avatar"), updateAvatar);
 router.put("/me/password", protect, changePassword);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 router.delete("/me", protect, deleteAccount);
 
 export default router;
