@@ -1,17 +1,36 @@
 import multer from 'multer'
-import path from 'path'
 
-// Memory storage for buffer access
+// Memory storage — files land as buffers so they can be streamed straight
+// to Cloudinary, nothing touches disk.
 const storage = multer.memoryStorage()
 
-// File filter
+const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
+const VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/quicktime', // .mov
+  'video/webm',
+  'video/x-matroska', // .mkv
+  'video/x-msvideo', // .avi
+  'video/mpeg',
+  'video/3gpp',
+]
+
+export const IMAGE_SIZE_LIMIT = 10 * 1024 * 1024 // 10MB per image
+export const VIDEO_SIZE_LIMIT = 100 * 1024 * 1024 // 100MB per video
+
+export const isImage = (mimetype) => IMAGE_MIME_TYPES.includes(mimetype)
+export const isVideo = (mimetype) => VIDEO_MIME_TYPES.includes(mimetype)
+
+// multer's built-in fileSize limit applies the same number to every file in
+// the request, so it's set here to the larger (video) ceiling just to let
+// multer through. The real, per-type limits (10MB images / 100MB videos)
+// are enforced in the post controller's splitAndValidateFiles(), which runs
+// BEFORE anything is uploaded to Cloudinary.
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
-  
-  if (allowedTypes.includes(file.mimetype)) {
+  if (isImage(file.mimetype) || isVideo(file.mimetype)) {
     cb(null, true)
   } else {
-    cb(new Error('Only image files are allowed!'), false)
+    cb(new Error('Only image and video files are allowed!'), false)
   }
 }
 
@@ -19,7 +38,7 @@ const fileFilter = (req, file, cb) => {
 export const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB, matches the frontend's per-image limit
+    fileSize: VIDEO_SIZE_LIMIT,
   },
-  fileFilter: fileFilter
+  fileFilter: fileFilter,
 })

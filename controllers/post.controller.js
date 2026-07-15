@@ -3,8 +3,114 @@ import { User } from "../models/user.model.js";
 import { Comment } from "../models/comment.model.js";
 import cloudinary from "../config/cloudinary.js";
 import { createNotification } from "./notification.controller.js";
+import {
+  isImage,
+  isVideo,
+  IMAGE_SIZE_LIMIT,
+  VIDEO_SIZE_LIMIT,
+} from "../middleware/upload.middleware.js";
 
-// Create a post (with optional image upload)
+// Sorts an incoming multer file list into images/videos and rejects
+// anything over its type-specific size limit before any Cloudinary call
+// is made, so a single oversized video doesn't burn upload time/bandwidth
+// on the rest of the batch before failing.
+const splitAndValidateFiles = (files) => {
+  const images = [];
+  const videos = [];
+
+  for (const file of files) {
+    if (isVideo(file.mimetype)) {
+      if (file.size > VIDEO_SIZE_LIMIT) {
+        throw new Error(`Video "${file.originalname}" exceeds the 100MB limit`);
+      }
+      videos.push(file);
+    } else if (isImage(file.mimetype)) {
+      if (file.size > IMAGE_SIZE_LIMIT) {
+        throw new Error(`Image "${file.originalname}" exceeds the 10MB limit`);
+      }
+      images.push(file);
+    } else {
+      throw new Error(`Unsupported file type: ${file.mimetype}`);
+    }
+  }
+
+  return { images, videos };
+};
+
+// Uploads one multer file to Cloudinary with the resource_type it needs
+// (videos MUST be uploaded/deleted as resource_type "video" or Cloudinary
+// won't find them again), and shapes the result to match the post schema.
+const uploadFileToCloudinary = async (file) => {
+  const base64 = file.buffer.toString("base64");
+  const dataUri = `data:${file.mimetype};base64,${base64}`;
+  const resourceType = isVideo(file.mimetype) ? "video" : "image";
+
+  const result = await cloudinary.uploader.upload(dataUri, {
+    folder: "mediahub",
+    resource_type: resourceType,
+  });
+
+  if (resourceType === "video") {
+    return {
+      kind: "video",
+      data: {
+        url: result.secure_url,
+        public_id: result.public_id,
+        thumbnail: cloudinary.url(result.public_id, {
+          resource_type: "video",
+          format: "jpg",
+        }),
+        duration: result.duration || null,
+      },
+    };
+  }
+
+  return {
+    kind: "image",
+    data: { url: result.secure_url, public_id: result.public_id },
+  };
+};
+
+// Uploads a mixed batch of files and returns { imagesData, videosData }
+// ready to assign onto a post document.
+const uploadFiles = async (files) => {
+  const { images, videos } = splitAndValidateFiles(files);
+  const uploaded = await Promise.all(
+    [...images, ...videos].map(uploadFileToCloudinary)
+  );
+
+  const imagesData = uploaded.filter((u) => u.kind === "image").map((u) => u.data);
+  const videosData = uploaded.filter((u) => u.kind === "video").map((u) => u.data);
+
+  return { imagesData, videosData };
+};
+
+// Deletes a post's existing images/videos from Cloudinary. Videos need
+// resource_type: "video" passed explicitly or the destroy call silently
+// no-ops (Cloudinary defaults to looking for an image with that public_id).
+const destroyPostMedia = async (post) => {
+  const jobs = [];
+
+  if (post.images && post.images.length > 0) {
+    jobs.push(
+      ...post.images
+        .filter((img) => img.public_id)
+        .map((img) => cloudinary.uploader.destroy(img.public_id, { resource_type: "image" }))
+    );
+  }
+
+  if (post.videos && post.videos.length > 0) {
+    jobs.push(
+      ...post.videos
+        .filter((v) => v.public_id)
+        .map((v) => cloudinary.uploader.destroy(v.public_id, { resource_type: "video" }))
+    );
+  }
+
+  await Promise.all(jobs);
+};
+
+// Create a post (with optional image/video upload)
 export const createPost = async (req, res) => {
   try {
     console.log("Request body:", req.body);
@@ -16,7 +122,7 @@ export const createPost = async (req, res) => {
     if (!title?.trim() && !content?.trim() && files.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Add a title, some content, or an image",
+        message: "Add a title, some content, or a photo/video",
       });
     }
 
@@ -30,27 +136,23 @@ export const createPost = async (req, res) => {
     }
 
     let imagesData = [];
+    let videosData = [];
     if (files.length > 0) {
       try {
-        const uploads = files.map((file) => {
-          const base64 = file.buffer.toString("base64");
-          const dataUri = `data:${file.mimetype};base64,${base64}`;
-          return cloudinary.uploader.upload(dataUri, { folder: "mediahub" });
-        });
+        const uploaded = await uploadFiles(files);
+        imagesData = uploaded.imagesData;
+        videosData = uploaded.videosData;
 
-        const results = await Promise.all(uploads);
-
-        imagesData = results.map((result) => ({
-          url: result.secure_url,
-          public_id: result.public_id,
-        }));
-
-        console.log("Cloudinary upload successful:", imagesData.map(i => i.url));
+        console.log(
+          "Cloudinary upload successful:",
+          [...imagesData.map((i) => i.url), ...videosData.map((v) => v.url)]
+        );
       } catch (uploadError) {
         console.error("Cloudinary upload error:", uploadError);
-        return res.status(500).json({
+        const isValidationError = /exceeds|Unsupported file type/.test(uploadError.message);
+        return res.status(isValidationError ? 400 : 500).json({
           success: false,
-          message: "Image upload failed: " + uploadError.message,
+          message: "Media upload failed: " + uploadError.message,
         });
       }
     }
@@ -60,6 +162,7 @@ export const createPost = async (req, res) => {
       content: content?.trim() || '',
       tags: tagsArray,
       images: imagesData,
+      videos: videosData,
       author: req.user._id,
     });
 
@@ -151,32 +254,18 @@ export const updatePost = async (req, res) => {
     const files = req.files || [];
     if (files.length > 0) {
       try {
-        // Replacing images: remove the old ones from Cloudinary first
-        if (post.images && post.images.length > 0) {
-          await Promise.all(
-            post.images
-              .filter((img) => img.public_id)
-              .map((img) => cloudinary.uploader.destroy(img.public_id))
-          );
-        }
+        // Replacing media: remove the old images/videos from Cloudinary first
+        await destroyPostMedia(post);
 
-        const uploads = files.map((file) => {
-          const base64 = file.buffer.toString("base64");
-          const dataUri = `data:${file.mimetype};base64,${base64}`;
-          return cloudinary.uploader.upload(dataUri, { folder: "mediahub" });
-        });
-
-        const results = await Promise.all(uploads);
-
-        post.images = results.map((result) => ({
-          url: result.secure_url,
-          public_id: result.public_id,
-        }));
+        const { imagesData, videosData } = await uploadFiles(files);
+        post.images = imagesData;
+        post.videos = videosData;
       } catch (uploadError) {
         console.error("Cloudinary upload error:", uploadError);
-        return res.status(500).json({
+        const isValidationError = /exceeds|Unsupported file type/.test(uploadError.message);
+        return res.status(isValidationError ? 400 : 500).json({
           success: false,
-          message: "Image upload failed: " + uploadError.message,
+          message: "Media upload failed: " + uploadError.message,
         });
       }
     }
@@ -206,17 +295,17 @@ export const deletePost = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to delete this post" });
     }
 
-    if (post.images && post.images.length > 0) {
-      try {
-        await Promise.all(
-          post.images
-            .filter((img) => img.public_id)
-            .map((img) => cloudinary.uploader.destroy(img.public_id))
-        );
-        console.log("Cloudinary images deleted:", post.images.map(i => i.public_id));
-      } catch (cloudinaryError) {
-        console.error("Cloudinary delete error:", cloudinaryError);
-      }
+    // Clean up both images AND videos from Cloudinary before removing the
+    // post document — previously this only handled images, which silently
+    // left every deleted post's videos orphaned in Cloudinary storage.
+    try {
+      await destroyPostMedia(post);
+      console.log(
+        "Cloudinary media deleted:",
+        [...(post.images || []).map((i) => i.public_id), ...(post.videos || []).map((v) => v.public_id)]
+      );
+    } catch (cloudinaryError) {
+      console.error("Cloudinary delete error:", cloudinaryError);
     }
 
     await post.deleteOne();
