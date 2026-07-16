@@ -3,86 +3,35 @@ import { User } from "../models/user.model.js";
 import { Comment } from "../models/comment.model.js";
 import cloudinary from "../config/cloudinary.js";
 import { createNotification } from "./notification.controller.js";
-import {
-  isImage,
-  isVideo,
-  IMAGE_SIZE_LIMIT,
-  VIDEO_SIZE_LIMIT,
-} from "../middleware/upload.middleware.js";
 
-// Sorts an incoming multer file list into images/videos and rejects
-// anything over its type-specific size limit before any Cloudinary call
-// is made, so a single oversized video doesn't burn upload time/bandwidth
-// on the rest of the batch before failing.
-const splitAndValidateFiles = (files) => {
-  const images = [];
-  const videos = [];
+const MAX_MEDIA_ITEMS = 10;
 
-  for (const file of files) {
-    if (isVideo(file.mimetype)) {
-      if (file.size > VIDEO_SIZE_LIMIT) {
-        throw new Error(`Video "${file.originalname}" exceeds the 100MB limit`);
-      }
-      videos.push(file);
-    } else if (isImage(file.mimetype)) {
-      if (file.size > IMAGE_SIZE_LIMIT) {
-        throw new Error(`Image "${file.originalname}" exceeds the 10MB limit`);
-      }
-      images.push(file);
-    } else {
-      throw new Error(`Unsupported file type: ${file.mimetype}`);
-    }
-  }
-
-  return { images, videos };
-};
-
-// Uploads one multer file to Cloudinary with the resource_type it needs
-// (videos MUST be uploaded/deleted as resource_type "video" or Cloudinary
-// won't find them again), and shapes the result to match the post schema.
-const uploadFileToCloudinary = async (file) => {
-  const base64 = file.buffer.toString("base64");
-  const dataUri = `data:${file.mimetype};base64,${base64}`;
-  const resourceType = isVideo(file.mimetype) ? "video" : "image";
-
-  const result = await cloudinary.uploader.upload(dataUri, {
-    folder: "mediahub",
-    resource_type: resourceType,
-  });
-
-  if (resourceType === "video") {
-    return {
-      kind: "video",
-      data: {
-        url: result.secure_url,
-        public_id: result.public_id,
-        thumbnail: cloudinary.url(result.public_id, {
-          resource_type: "video",
-          format: "jpg",
-        }),
-        duration: result.duration || null,
-      },
-    };
-  }
-
-  return {
-    kind: "image",
-    data: { url: result.secure_url, public_id: result.public_id },
-  };
-};
-
-// Uploads a mixed batch of files and returns { imagesData, videosData }
-// ready to assign onto a post document.
-const uploadFiles = async (files) => {
-  const { images, videos } = splitAndValidateFiles(files);
-  const uploaded = await Promise.all(
-    [...images, ...videos].map(uploadFileToCloudinary)
-  );
-
-  const imagesData = uploaded.filter((u) => u.kind === "image").map((u) => u.data);
-  const videosData = uploaded.filter((u) => u.kind === "video").map((u) => u.data);
-
-  return { imagesData, videosData };
+// The browser now uploads directly to Cloudinary (see upload.controller.js)
+// and sends us back the resulting { url, public_id, ... } objects instead of
+// the raw file. This picks only the expected fields off whatever the client
+// sent and drops anything whose public_id isn't under our "mediahub/" folder
+// — a lightweight sanity check that the item actually came through our
+// signed-upload flow (which always writes into that folder) rather than
+// being an arbitrary Cloudinary URL someone typed into the request body.
+// It is NOT a full ownership check (that would require calling Cloudinary's
+// admin API per item); it's enough for this app's threat model since the
+// signature endpoint itself is auth-gated.
+const sanitizeMediaArray = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(
+      (item) =>
+        item &&
+        typeof item.url === "string" &&
+        typeof item.public_id === "string" &&
+        item.public_id.startsWith("mediahub/")
+    )
+    .map((item) => ({
+      url: item.url,
+      public_id: item.public_id,
+      ...(typeof item.thumbnail === "string" ? { thumbnail: item.thumbnail } : {}),
+      ...(typeof item.duration === "number" ? { duration: item.duration } : {}),
+    }));
 };
 
 // Deletes a post's existing images/videos from Cloudinary. Videos need
@@ -110,19 +59,29 @@ const destroyPostMedia = async (post) => {
   await Promise.all(jobs);
 };
 
-// Create a post (with optional image/video upload)
+// Create a post. Media (if any) has already been uploaded directly to
+// Cloudinary by the browser — req.body.images / req.body.videos carry the
+// resulting metadata, not files. No multer/file handling happens here
+// anymore, which is exactly why this request is small and fast regardless
+// of how large the original video was.
 export const createPost = async (req, res) => {
   try {
-    console.log("Request body:", req.body);
-    console.log("Request files:", req.files);
+    const { title, content, tags, images, videos } = req.body;
 
-    const { title, content, tags } = req.body;
-    const files = req.files || [];
+    const imagesData = sanitizeMediaArray(images);
+    const videosData = sanitizeMediaArray(videos);
 
-    if (!title?.trim() && !content?.trim() && files.length === 0) {
+    if (!title?.trim() && !content?.trim() && imagesData.length === 0 && videosData.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Add a title, some content, or a photo/video",
+      });
+    }
+
+    if (imagesData.length + videosData.length > MAX_MEDIA_ITEMS) {
+      return res.status(400).json({
+        success: false,
+        message: `You can add up to ${MAX_MEDIA_ITEMS} media items`,
       });
     }
 
@@ -130,36 +89,14 @@ export const createPost = async (req, res) => {
     if (tags) {
       if (Array.isArray(tags)) {
         tagsArray = tags;
-      } else if (typeof tags === 'string') {
-        tagsArray = tags.split(',').map(t => t.trim()).filter(Boolean);
-      }
-    }
-
-    let imagesData = [];
-    let videosData = [];
-    if (files.length > 0) {
-      try {
-        const uploaded = await uploadFiles(files);
-        imagesData = uploaded.imagesData;
-        videosData = uploaded.videosData;
-
-        console.log(
-          "Cloudinary upload successful:",
-          [...imagesData.map((i) => i.url), ...videosData.map((v) => v.url)]
-        );
-      } catch (uploadError) {
-        console.error("Cloudinary upload error:", uploadError);
-        const isValidationError = /exceeds|Unsupported file type/.test(uploadError.message);
-        return res.status(isValidationError ? 400 : 500).json({
-          success: false,
-          message: "Media upload failed: " + uploadError.message,
-        });
+      } else if (typeof tags === "string") {
+        tagsArray = tags.split(",").map((t) => t.trim()).filter(Boolean);
       }
     }
 
     const post = await Post.create({
-      title: title?.trim() || '',
-      content: content?.trim() || '',
+      title: title?.trim() || "",
+      content: content?.trim() || "",
       tags: tagsArray,
       images: imagesData,
       videos: videosData,
@@ -230,7 +167,8 @@ export const getPost = async (req, res) => {
   }
 };
 
-// Update post
+// Update post. Same deal as createPost — images/videos in the body (if
+// present) are already-uploaded Cloudinary metadata, not files.
 export const updatePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -243,31 +181,34 @@ export const updatePost = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to update this post" });
     }
 
-    const { title, content, tags } = req.body;
+    const { title, content, tags, images, videos } = req.body;
 
-    if (title) post.title = title;
-    if (content) post.content = content;
+    if (title !== undefined) post.title = title;
+    if (content !== undefined) post.content = content;
     if (tags) {
-      post.tags = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim()).filter(Boolean);
+      post.tags = Array.isArray(tags) ? tags : tags.split(",").map((t) => t.trim()).filter(Boolean);
     }
 
-    const files = req.files || [];
-    if (files.length > 0) {
-      try {
-        // Replacing media: remove the old images/videos from Cloudinary first
-        await destroyPostMedia(post);
+    // Only touch media if the client actually sent media fields — this lets
+    // a title/content-only edit go through without silently wiping images.
+    // Sending images/videos as [] on purpose (removing all media) is
+    // supported since the keys being present is what triggers a replace.
+    const hasNewMedia = "images" in req.body || "videos" in req.body;
+    if (hasNewMedia) {
+      const imagesData = sanitizeMediaArray(images);
+      const videosData = sanitizeMediaArray(videos);
 
-        const { imagesData, videosData } = await uploadFiles(files);
-        post.images = imagesData;
-        post.videos = videosData;
-      } catch (uploadError) {
-        console.error("Cloudinary upload error:", uploadError);
-        const isValidationError = /exceeds|Unsupported file type/.test(uploadError.message);
-        return res.status(isValidationError ? 400 : 500).json({
+      if (imagesData.length + videosData.length > MAX_MEDIA_ITEMS) {
+        return res.status(400).json({
           success: false,
-          message: "Media upload failed: " + uploadError.message,
+          message: `You can add up to ${MAX_MEDIA_ITEMS} media items`,
         });
       }
+
+      // Replacing media: remove the old images/videos from Cloudinary first
+      await destroyPostMedia(post);
+      post.images = imagesData;
+      post.videos = videosData;
     }
 
     await post.save();
@@ -296,8 +237,7 @@ export const deletePost = async (req, res) => {
     }
 
     // Clean up both images AND videos from Cloudinary before removing the
-    // post document — previously this only handled images, which silently
-    // left every deleted post's videos orphaned in Cloudinary storage.
+    // post document.
     try {
       await destroyPostMedia(post);
       console.log(

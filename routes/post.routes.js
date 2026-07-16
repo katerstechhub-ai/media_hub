@@ -14,7 +14,11 @@ import {
 } from "../controllers/post.controller.js";
 import { downloadMedia } from "../controllers/download.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
-import { upload } from "../middleware/upload.middleware.js"; // ✅ ADD THIS
+// NOTE: `upload` (multer) middleware is no longer used on the post routes —
+// the browser now uploads media directly to Cloudinary (see upload.routes.js)
+// and posts/PUTs a small JSON body with the resulting URLs instead of raw
+// files. multer/upload.middleware.js is still used elsewhere (e.g. avatar
+// upload), so it hasn't been removed from the project — just from here.
 
 const router = express.Router();
 
@@ -28,11 +32,11 @@ router.get("/:id", getPost);
 // Everything below requires authentication
 router.use(protect);
 
-// Accept up to 10 mixed image/video files per post under the field name "media".
-// NOTE: the field name changed from "images" to "media" since it now carries
-// both — update the frontend's FormData.append(...) calls to match.
-router.post("/", upload.array("media", 10), createPost);
-router.put("/:id", upload.array("media", 10), updatePost);
+// Body is now plain JSON: { title, content, tags, images, videos }, where
+// images/videos are the [{ url, public_id, ... }] results from a direct
+// Cloudinary upload the browser already performed.
+router.post("/", createPost);
+router.put("/:id", updatePost);
 router.delete("/:id", deletePost);
 
 router.post("/:id/like", likePost);
