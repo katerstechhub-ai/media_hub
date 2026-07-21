@@ -2,7 +2,9 @@ import "dotenv/config";
 
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import { connectDB } from "./config/db.js";
+import { apiLimiter } from "./middleware/rateLimit.middleware.js";
 
 console.log('🚀 Starting server...');
 
@@ -55,7 +57,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+app.use(helmet());
 app.use(express.json());
+app.use("/api", apiLimiter);
 
 // ✅ Add a test route BEFORE your auth routes
 app.get('/api/test', (req, res) => {
