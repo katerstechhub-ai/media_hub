@@ -30,10 +30,6 @@ export const register = async (req, res) => {
     const user = await User.create({ name, email, password: hashedPassword });
     const token = generateToken(user._id, user.role);
 
-    // Return the full user document (minus password) instead of a hand-picked
-    // subset of fields. The old version only sent { id, name, email, role,
-    // avatar }, which silently dropped createdAt (and anything else added to
-    // the schema later) from the very first response the frontend ever sees.
     const userResponse = user.toObject();
     delete userResponse.password;
 
@@ -76,9 +72,6 @@ export const login = async (req, res) => {
 
     const token = generateToken(user._id, user.role);
 
-    // Same fix as register: send the full user doc (minus password) so
-    // fields like createdAt are present right away, not only after a later
-    // getMe() call overwrites the store.
     const userResponse = user.toObject();
     delete userResponse.password;
 
@@ -126,7 +119,6 @@ export const getMe = async (req, res) => {
   res.status(200).json({ success: true, data: req.user });
 };
 
-// ✅ Public profile view — safe for guests, only exposes non-sensitive fields
 export const getUserProfile = async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select(
@@ -172,8 +164,23 @@ export const updateAvatar = async (req, res) => {
     });
 
     const user = await User.findById(req.user._id);
+    const oldAvatarPublicId = user.avatarPublicId;
+
     user.avatar = result.secure_url;
+    user.avatarPublicId = result.public_id;
     await user.save();
+
+    // Delete the old avatar from Cloudinary now that the new one is saved.
+    // Runs after save so a failed delete never blocks the avatar update
+    // itself; if it fails we log it instead of silently losing the old
+    // asset's id.
+    if (oldAvatarPublicId) {
+      try {
+        await cloudinary.uploader.destroy(oldAvatarPublicId, { resource_type: "image" });
+      } catch (cloudinaryError) {
+        console.error("Old avatar Cloudinary delete error:", cloudinaryError);
+      }
+    }
 
     res.status(200).json({ success: true, data: user });
   } catch (error) {
@@ -192,7 +199,6 @@ export const changePassword = async (req, res) => {
       return res.status(400).json({ message: "New password must be at least 6 characters" });
     }
 
-    // req.user comes from `protect` with .select("-password"), so re-fetch with the hash included
     const user = await User.findById(req.user._id);
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
@@ -209,9 +215,6 @@ export const changePassword = async (req, res) => {
   }
 };
 
-// Step 1 of "forgot password": takes an email, emails a reset link if the
-// account exists. Always responds the same way either way so this endpoint
-// can't be used to check which emails are registered.
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -231,7 +234,7 @@ export const forgotPassword = async (req, res) => {
     const hashedToken = crypto.createHash("sha256").update(rawToken).digest("hex");
 
     user.resetPasswordToken = hashedToken;
-    user.resetPasswordExpires = Date.now() + 30 * 60 * 1000; // 30 minutes
+    user.resetPasswordExpires = Date.now() + 30 * 60 * 1000;
     await user.save();
 
     const resetUrl = `${env.clientUrl}/reset-password?token=${rawToken}`;
@@ -248,7 +251,6 @@ export const forgotPassword = async (req, res) => {
         `,
       });
     } catch (emailError) {
-      // Roll back the token if the email genuinely failed to send
       user.resetPasswordToken = undefined;
       user.resetPasswordExpires = undefined;
       await user.save();
@@ -265,8 +267,6 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-// Step 2 of "forgot password": takes the token from the emailed link +
-// a new password, verifies the token matches and hasn't expired, then sets it.
 export const resetPassword = async (req, res) => {
   try {
     const { token, newPassword } = req.body;
