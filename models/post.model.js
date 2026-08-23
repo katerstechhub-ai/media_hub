@@ -28,4 +28,12 @@ const postSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Feed sorts by createdAt descending — this is the index that makes
+// Post.find().sort({ createdAt: -1 }) an index scan instead of a full
+// collection scan as the posts collection grows.
+postSchema.index({ createdAt: -1 });
+// getMyPosts filters by author then sorts by createdAt — a compound index
+// covers both parts of that query in one pass.
+postSchema.index({ author: 1, createdAt: -1 });
+
 export const Post = mongoose.model("Post", postSchema);

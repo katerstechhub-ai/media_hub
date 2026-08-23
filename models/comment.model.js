@@ -11,4 +11,8 @@ const commentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Comments are always looked up by post (feed comment counts, comment
+// list for a post) and sorted by createdAt — same reasoning as Post's index.
+commentSchema.index({ post: 1, createdAt: -1 });
+
 export const Comment = mongoose.model("Comment", commentSchema);

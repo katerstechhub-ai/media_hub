@@ -73,16 +73,41 @@ export const replyToComment = async (req, res) => {
   }
 };
 
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 50;
+
 export const getCommentsForPost = async (req, res) => {
   try {
     const { postId } = req.params;
+    const limit = Math.min(
+      parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
+      MAX_PAGE_SIZE
+    );
+    const { before } = req.query;
 
-    const comments = await Comment.find({ post: postId })
+    const query = before
+      ? { post: postId, createdAt: { $lt: new Date(before) } }
+      : { post: postId };
+
+    const comments = await Comment.find(query)
       .populate("author", "name email avatar")
       .populate("replies")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(limit + 1);
 
-    res.status(200).json({ success: true, count: comments.length, data: comments });
+    const hasMore = comments.length > limit;
+    const pageOfComments = hasMore ? comments.slice(0, limit) : comments;
+    const nextCursor = hasMore
+      ? pageOfComments[pageOfComments.length - 1].createdAt
+      : null;
+
+    res.status(200).json({
+      success: true,
+      count: pageOfComments.length,
+      data: pageOfComments,
+      nextCursor,
+      hasMore,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

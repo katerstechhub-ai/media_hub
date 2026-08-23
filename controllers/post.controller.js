@@ -113,33 +113,57 @@ export const createPost = async (req, res) => {
   }
 };
 
-// Get all posts
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 50;
+
+// Get posts (feed) — cursor-based pagination on createdAt so results stay
+// stable as new posts get inserted (an offset/skip approach would shift
+// pages around under a live feed). Pass ?limit=20 and, for the next page,
+// ?before=<createdAt of the last post you received> to page further back.
 export const getPosts = async (req, res) => {
   try {
-    const posts = await Post.find()
+    const limit = Math.min(
+      parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
+      MAX_PAGE_SIZE
+    );
+    const { before } = req.query;
+
+    const query = before ? { createdAt: { $lt: new Date(before) } } : {};
+
+    const posts = await Post.find(query)
       .populate("author", "name avatar bio createdAt")
       .sort({ createdAt: -1 })
+      .limit(limit + 1) // fetch one extra to know if there's a next page
       .lean();
 
-    // One aggregate query for ALL posts' comment counts at once, instead of
+    const hasMore = posts.length > limit;
+    const pageOfPosts = hasMore ? posts.slice(0, limit) : posts;
+
+    // One aggregate query for THIS PAGE's comment counts at once, instead of
     // making the frontend fire a separate /api/comments/:postId request per
-    // post just to show a count. This is the main fix for feed load speed.
-    const postIds = posts.map((p) => p._id);
+    // post just to show a count.
+    const postIds = pageOfPosts.map((p) => p._id);
     const counts = await Comment.aggregate([
       { $match: { post: { $in: postIds } } },
       { $group: { _id: "$post", count: { $sum: 1 } } },
     ]);
     const countMap = new Map(counts.map((c) => [String(c._id), c.count]));
 
-    const postsWithCounts = posts.map((p) => ({
+    const postsWithCounts = pageOfPosts.map((p) => ({
       ...p,
       commentCount: countMap.get(String(p._id)) || 0,
     }));
+
+    const nextCursor = hasMore
+      ? pageOfPosts[pageOfPosts.length - 1].createdAt
+      : null;
 
     res.status(200).json({
       success: true,
       count: postsWithCounts.length,
       data: postsWithCounts,
+      nextCursor,
+      hasMore,
     });
   } catch (error) {
     console.error("Get posts error:", error);
@@ -415,17 +439,36 @@ export const deleteComment = async (req, res) => {
   }
 };
 
-// Get my posts
+// Get my posts — same cursor pattern as getPosts.
 export const getMyPosts = async (req, res) => {
   try {
-    const posts = await Post.find({ author: req.user._id })
+    const limit = Math.min(
+      parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
+      MAX_PAGE_SIZE
+    );
+    const { before } = req.query;
+
+    const query = { author: req.user._id };
+    if (before) query.createdAt = { $lt: new Date(before) };
+
+    const posts = await Post.find(query)
       .populate("author", "name avatar bio createdAt")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(limit + 1)
+      .lean();
+
+    const hasMore = posts.length > limit;
+    const pageOfPosts = hasMore ? posts.slice(0, limit) : posts;
+    const nextCursor = hasMore
+      ? pageOfPosts[pageOfPosts.length - 1].createdAt
+      : null;
 
     res.status(200).json({
       success: true,
-      count: posts.length,
-      data: posts,
+      count: pageOfPosts.length,
+      data: pageOfPosts,
+      nextCursor,
+      hasMore,
     });
   } catch (error) {
     console.error("Get my posts error:", error);
