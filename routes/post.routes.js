@@ -11,6 +11,7 @@ import {
   addComment,
   deleteComment,
   getMyPosts,
+  getPostsByAuthor,
 } from "../controllers/post.controller.js";
 import { downloadMedia } from "../controllers/download.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
@@ -25,6 +26,11 @@ const router = express.Router();
 // Public routes — guests can view posts without logging in
 router.get("/", getPosts);
 router.get("/my-posts", protect, getMyPosts); // must come before "/:id" or it'll be swallowed
+// Someone else's posts (UserProfilePage) — public like getPosts/getPostLikers,
+// since guest read-only browsing can view any profile. Two path segments, so
+// it doesn't collide with "/:id" below even without reordering, but it's kept
+// up here with the other list-of-posts routes for readability.
+router.get("/author/:authorId", getPostsByAuthor);
 router.get("/download", downloadMedia); // proxy download for images/videos — must come before "/:id" too
 router.get("/:id/likes", getPostLikers);
 router.get("/:id", getPost);

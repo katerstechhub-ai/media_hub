@@ -475,3 +475,45 @@ export const getMyPosts = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// Get a specific author's posts — same cursor pattern as getPosts/getMyPosts,
+// scoped to req.params.authorId instead of the logged-in user. This is what
+// UserProfilePage should call instead of filtering a global unpaginated list
+// client-side. Public (no auth) so guest read-only browsing can view it too
+// — matches the rest of the app's public GET routes.
+export const getPostsByAuthor = async (req, res) => {
+  try {
+    const { authorId } = req.params;
+    const limit = Math.min(
+      parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
+      MAX_PAGE_SIZE
+    );
+    const { before } = req.query;
+
+    const query = { author: authorId };
+    if (before) query.createdAt = { $lt: new Date(before) };
+
+    const posts = await Post.find(query)
+      .populate("author", "name avatar bio createdAt")
+      .sort({ createdAt: -1 })
+      .limit(limit + 1)
+      .lean();
+
+    const hasMore = posts.length > limit;
+    const pageOfPosts = hasMore ? posts.slice(0, limit) : posts;
+    const nextCursor = hasMore
+      ? pageOfPosts[pageOfPosts.length - 1].createdAt
+      : null;
+
+    res.status(200).json({
+      success: true,
+      count: pageOfPosts.length,
+      data: pageOfPosts,
+      nextCursor,
+      hasMore,
+    });
+  } catch (error) {
+    console.error("Get posts by author error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
