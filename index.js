@@ -29,6 +29,9 @@ console.log('✅ Notification routes imported successfully');
 import adminRoutes from "./routes/admin.routes.js";
 console.log('✅ Admin routes imported successfully');
 
+import thoughtRoutes from "./routes/thought.routes.js";
+console.log('✅ Thought routes imported successfully');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -63,7 +66,7 @@ app.use("/api", apiLimiter);
 
 // ✅ Add a test route BEFORE your auth routes
 app.get('/api/test', (req, res) => {
-  res.json({ 
+  res.json({
     message: '✅ Test route works!',
     timestamp: new Date().toISOString()
   });
@@ -79,6 +82,7 @@ app.use("/api/tags", tagRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/thoughts", thoughtRoutes);
 
 app.get("/", (req, res) => {
   res.send("MediaHub API is running");
@@ -102,6 +106,6 @@ app.use((err, req, res, next) => {
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
-    console.log(`✅ Routes mounted: /api/auth, /api/posts, /api/comments, /api/tags, /api/upload, /api/notifications, /api/admin`);
+    console.log(`✅ Routes mounted: /api/auth, /api/posts, /api/comments, /api/tags, /api/upload, /api/notifications, /api/admin, /api/thoughts`);
   });
 });
