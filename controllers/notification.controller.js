@@ -1,10 +1,10 @@
 import { Notification } from "../models/notification.model.js";
+import { emitToUser } from "../config/socket.js";
 
 // Set to false to go back to skipping notifications for your own actions.
 const NOTIFY_SELF = true;
 
 // Internal helper — call this from other controllers (likePost, addComment, etc.)
-// Self notifications are created already read so they don't inflate the unread badge.
 export const createNotification = async ({ recipient, sender, type, post, comment, thought, thoughtReply }) => {
   try {
     const isSelf = recipient.toString() === sender.toString();
@@ -17,8 +17,9 @@ export const createNotification = async ({ recipient, sender, type, post, commen
       comment,
       thought,
       thoughtReply,
-      read: isSelf,
+      read: false,
     });
+    emitToUser(recipient, "notification:refresh");
   } catch (error) {
     console.error("Failed to create notification:", error.message);
   }

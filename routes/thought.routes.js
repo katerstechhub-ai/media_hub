@@ -56,11 +56,11 @@ async function notifyThought({ recipient, sender, type, thought, thoughtReply })
       // One notification per (sender, thought) — re-liking refreshes it instead of duplicating
       await Notification.findOneAndUpdate(
         { recipient, sender, type, thought },
-        { $set: { read: isSelf }, $setOnInsert: { recipient, sender, type, thought } },
+        { $set: { read: false }, $setOnInsert: { recipient, sender, type, thought } },
         { upsert: true, new: true }
       )
     } else {
-      await Notification.create({ recipient, sender, type, thought, thoughtReply, read: isSelf })
+      await Notification.create({ recipient, sender, type, thought, thoughtReply })
     }
     emitToUser(recipient, 'notification:refresh')
   } catch (err) {
