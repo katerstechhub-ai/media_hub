@@ -24,6 +24,7 @@
     "mongoose": "^9.7.3",
     "multer": "^2.2.0",
     "nodemailer": "^9.0.3",
-    "resend": "^6.17.2"
+    "resend": "^6.17.2",
+    "socket.io": "^4.8.4"
   }
 }

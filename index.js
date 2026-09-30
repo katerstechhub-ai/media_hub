@@ -1,10 +1,12 @@
 import "dotenv/config";
 
+import http from "http";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { connectDB } from "./config/db.js";
 import { apiLimiter } from "./middleware/rateLimit.middleware.js";
+import { initSocket } from "./config/socket.js";
 
 console.log('🚀 Starting server...');
 
@@ -103,8 +105,11 @@ app.use((err, req, res, next) => {
   next();
 });
 
+const httpServer = http.createServer(app);
+initSocket(httpServer, (origin) => allowedOrigins.indexOf(origin) !== -1);
+
 connectDB().then(() => {
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`✅ Routes mounted: /api/auth, /api/posts, /api/comments, /api/tags, /api/upload, /api/notifications, /api/admin, /api/thoughts`);
   });

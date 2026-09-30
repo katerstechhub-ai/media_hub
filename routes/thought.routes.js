@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Thought from "../models/Thought.model.js";
 import { Notification } from "../models/notification.model.js";
 import { protect } from "../middleware/auth.middleware.js";
+import { emitToUser } from "../config/socket.js";
 
 const router = express.Router()
 
@@ -49,17 +50,19 @@ function includesId(list, id) {
 // Notification failures must never break the main action.
 async function notifyThought({ recipient, sender, type, thought, thoughtReply }) {
   try {
-    if (!NOTIFY_SELF && String(recipient) === String(sender)) return
+    const isSelf = String(recipient) === String(sender)
+    if (!NOTIFY_SELF && isSelf) return
     if (type === 'like_thought') {
       // One notification per (sender, thought) — re-liking refreshes it instead of duplicating
       await Notification.findOneAndUpdate(
         { recipient, sender, type, thought },
-        { $set: { read: false }, $setOnInsert: { recipient, sender, type, thought } },
+        { $set: { read: isSelf }, $setOnInsert: { recipient, sender, type, thought } },
         { upsert: true, new: true }
       )
     } else {
-      await Notification.create({ recipient, sender, type, thought, thoughtReply })
+      await Notification.create({ recipient, sender, type, thought, thoughtReply, read: isSelf })
     }
+    emitToUser(recipient, 'notification:refresh')
   } catch (err) {
     console.error('notifyThought failed:', err)
   }
@@ -186,6 +189,7 @@ router.post('/:id/like', protect, async (req, res) => {
           type: 'like_thought',
           thought: thought._id,
         })
+        emitToUser(thought.author, 'notification:refresh')
       } catch (err) {
         console.error('remove like notification failed:', err)
       }
