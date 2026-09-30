@@ -113,6 +113,21 @@ router.get('/:id/replies', async (req, res) => {
   }
 })
 
+/* GET /api/thoughts/:id — public. One thought (used when opening from a notification). */
+router.get('/:id', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid id' })
+    }
+    const thought = await Thought.findById(req.params.id).populate('author', AUTHOR_FIELDS).lean()
+    if (!thought) return res.status(404).json({ success: false, message: 'Thought not found' })
+    res.json({ success: true, data: { thought } })
+  } catch (err) {
+    console.error('GET /thoughts/:id failed:', err)
+    res.status(500).json({ success: false, message: 'Could not load thought' })
+  }
+})
+
 /* POST /api/thoughts — needs login. Body: { text?, sticker?, parentId? } */
 router.post('/', protect, async (req, res) => {
   try {
