@@ -1,11 +1,24 @@
 import { Notification } from "../models/notification.model.js";
 
+// Set to false to go back to skipping notifications for your own actions.
+const NOTIFY_SELF = true;
+
 // Internal helper — call this from other controllers (likePost, addComment, etc.)
-// Does nothing if sender === recipient (no self-notifications).
-export const createNotification = async ({ recipient, sender, type, post, comment }) => {
+// Self notifications are created already read so they don't inflate the unread badge.
+export const createNotification = async ({ recipient, sender, type, post, comment, thought, thoughtReply }) => {
   try {
-    if (recipient.toString() === sender.toString()) return;
-    await Notification.create({ recipient, sender, type, post, comment });
+    const isSelf = recipient.toString() === sender.toString();
+    if (isSelf && !NOTIFY_SELF) return;
+    await Notification.create({
+      recipient,
+      sender,
+      type,
+      post,
+      comment,
+      thought,
+      thoughtReply,
+      read: isSelf,
+    });
   } catch (error) {
     console.error("Failed to create notification:", error.message);
   }
@@ -23,6 +36,8 @@ export const getMyNotifications = async (req, res) => {
         // ✅ NOW POPULATES FULL POST DATA – includes images & videos
         .populate("post", "title images videos content")
         .populate("comment", "content")
+        .populate("thought", "text sticker")
+        .populate("thoughtReply", "text sticker")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -30,14 +45,19 @@ export const getMyNotifications = async (req, res) => {
       Notification.countDocuments({ recipient: req.user._id, read: false }),
     ]);
 
+    const data = notifications.map((n) => ({
+      ...n.toObject(),
+      isSelf: String(n.sender?._id) === String(req.user._id),
+    }));
+
     res.status(200).json({
       success: true,
-      count: notifications.length,
+      count: data.length,
       total,
       unreadCount,
       page,
       totalPages: Math.ceil(total / limit),
-      data: notifications,
+      data,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

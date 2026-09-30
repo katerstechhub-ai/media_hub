@@ -1,6 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Thought from "../models/Thought.model.js";
+import { Notification } from "../models/notification.model.js";
 import { protect } from "../middleware/auth.middleware.js";
 
 const router = express.Router()
@@ -8,6 +9,7 @@ const router = express.Router()
 const PAGE_SIZE = 20
 const MAX_LEN = 280
 const AUTHOR_FIELDS = 'name avatar'
+const NOTIFY_SELF = true
 
 // Only an emoji string or an https GIPHY URL is accepted as a sticker.
 function cleanSticker(input) {
@@ -42,6 +44,25 @@ function includesId(list, id) {
     if (String(list[i]) === String(id)) return true
   }
   return false
+}
+
+// Notification failures must never break the main action.
+async function notifyThought({ recipient, sender, type, thought, thoughtReply }) {
+  try {
+    if (!NOTIFY_SELF && String(recipient) === String(sender)) return
+    if (type === 'like_thought') {
+      // One notification per (sender, thought) — re-liking refreshes it instead of duplicating
+      await Notification.findOneAndUpdate(
+        { recipient, sender, type, thought },
+        { $set: { read: false }, $setOnInsert: { recipient, sender, type, thought } },
+        { upsert: true, new: true }
+      )
+    } else {
+      await Notification.create({ recipient, sender, type, thought, thoughtReply })
+    }
+  } catch (err) {
+    console.error('notifyThought failed:', err)
+  }
 }
 
 /* GET /api/thoughts — public. Cursor pagination, newest first. */
@@ -107,7 +128,7 @@ router.post('/', protect, async (req, res) => {
       if (!mongoose.isValidObjectId(req.body.parentId)) {
         return res.status(400).json({ success: false, message: 'Invalid parent' })
       }
-      parent = await Thought.findById(req.body.parentId).select('parent')
+      parent = await Thought.findById(req.body.parentId).select('parent author')
       if (!parent) return res.status(404).json({ success: false, message: 'Thought not found' })
       // One level of replies only
       if (parent.parent) {
@@ -122,7 +143,16 @@ router.post('/', protect, async (req, res) => {
       parent: parent ? parent._id : null,
     })
 
-    if (parent) await Thought.updateOne({ _id: parent._id }, { $inc: { replyCount: 1 } })
+    if (parent) {
+      await Thought.updateOne({ _id: parent._id }, { $inc: { replyCount: 1 } })
+      await notifyThought({
+        recipient: parent.author,
+        sender: req.user._id,
+        type: 'reply_thought',
+        thought: parent._id,
+        thoughtReply: created._id,
+      })
+    }
 
     const populated = await Thought.findById(created._id).populate('author', AUTHOR_FIELDS).lean()
     res.status(201).json({ success: true, data: { thought: populated } })
@@ -138,7 +168,7 @@ router.post('/:id/like', protect, async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ success: false, message: 'Invalid id' })
     }
-    const thought = await Thought.findById(req.params.id).select('likes')
+    const thought = await Thought.findById(req.params.id).select('likes author')
     if (!thought) return res.status(404).json({ success: false, message: 'Thought not found' })
 
     const liked = includesId(thought.likes, req.user._id)
@@ -146,6 +176,28 @@ router.post('/:id/like', protect, async (req, res) => {
       { _id: thought._id },
       liked ? { $pull: { likes: req.user._id } } : { $addToSet: { likes: req.user._id } }
     )
+
+    if (liked) {
+      // Unliked — remove the notification
+      try {
+        await Notification.deleteMany({
+          recipient: thought.author,
+          sender: req.user._id,
+          type: 'like_thought',
+          thought: thought._id,
+        })
+      } catch (err) {
+        console.error('remove like notification failed:', err)
+      }
+    } else {
+      await notifyThought({
+        recipient: thought.author,
+        sender: req.user._id,
+        type: 'like_thought',
+        thought: thought._id,
+      })
+    }
+
     res.json({ success: true, liked: !liked })
   } catch (err) {
     console.error('POST /thoughts/:id/like failed:', err)
@@ -165,9 +217,20 @@ router.delete('/:id', protect, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not allowed' })
     }
 
+    const replyIds = (await Thought.find({ parent: thought._id }).select('_id').lean()).map((r) => r._id)
+    const allIds = [thought._id, ...replyIds]
+
     await Thought.deleteMany({ parent: thought._id })
     if (thought.parent) await Thought.updateOne({ _id: thought.parent }, { $inc: { replyCount: -1 } })
     await thought.deleteOne()
+
+    try {
+      await Notification.deleteMany({
+        $or: [{ thought: { $in: allIds } }, { thoughtReply: { $in: allIds } }],
+      })
+    } catch (err) {
+      console.error('cleanup thought notifications failed:', err)
+    }
 
     res.json({ success: true })
   } catch (err) {
