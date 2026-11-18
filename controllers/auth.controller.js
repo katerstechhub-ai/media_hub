@@ -10,6 +10,23 @@ const generateToken = (id, role) => {
   return jwt.sign({ id, role }, env.jwtAccessSecret, { expiresIn: "7d" });
 };
 
+const cleanGuestName = (raw) => (raw || "").trim().replace(/\s+/g, " ");
+
+// The same name always maps to the same deterministic guest email.
+// This ensures returning guests must use their exact registered name to log back in.
+const guestEmail = (name) => {
+  const key = name.toLowerCase();
+  const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 32);
+  return `guest-${hash}@guest.local`;
+};
+
+const sendGuestSession = (res, user, status, message) => {
+  const token = generateToken(user._id, user.role);
+  const userResponse = user.toObject();
+  delete userResponse.password;
+  res.status(status).json({ success: true, message, token, user: userResponse });
+};
+
 export const register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -86,35 +103,61 @@ export const login = async (req, res) => {
   }
 };
 
-export const guestLogin = async (req, res) => {
+export const guestRegister = async (req, res) => {
   try {
-    const name = (req.body.name || "").trim();
-
+    const name = cleanGuestName(req.body.name);
     if (name.length < 2 || name.length > 50) {
       return res.status(400).json({ message: "Name must be 2-50 characters" });
     }
 
-    const id = crypto.randomBytes(8).toString("hex");
+    const email = guestEmail(name);
+    
+    // Check if a guest account with this name already exists
+    const existingGuest = await User.findOne({ email });
+    if (existingGuest) {
+      return res.status(409).json({ 
+        message: "That name is already registered. Only one unique name works to log back in—please use login instead." 
+      });
+    }
+
     const hashedPassword = await bcrypt.hash(crypto.randomBytes(16).toString("hex"), 10);
 
-    const user = await User.create({
-      name,
-      email: `guest-${id}@guest.local`,
-      password: hashedPassword,
-      isOnline: true,
-    });
+    try {
+      const user = await User.create({ name, email, password: hashedPassword, isOnline: true });
+      return sendGuestSession(res, user, 201, "Account created");
+    } catch (err) {
+      if (err.code === 11000) {
+        return res.status(409).json({ 
+          message: "That name is already registered. Only one unique name works to log back in—please use login instead." 
+        });
+      }
+      throw err;
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
-    const token = generateToken(user._id, user.role);
+export const guestLogin = async (req, res) => {
+  try {
+    const name = cleanGuestName(req.body.name);
+    if (name.length < 2 || name.length > 50) {
+      return res.status(400).json({ message: "Name must be 2-50 characters" });
+    }
 
-    const userResponse = user.toObject();
-    delete userResponse.password;
+    const user = await User.findOne({ email: guestEmail(name) });
+    if (!user) {
+      return res.status(404).json({ message: "No account found with that name. Please create a new guest account." });
+    }
+    if (user.isBlocked) {
+      return res.status(403).json({ message: "Account has been blocked" });
+    }
 
-    res.status(201).json({
-      success: true,
-      message: "Welcome",
-      token,
-      user: userResponse,
-    });
+    user.isOnline = true;
+    user.lastSeen = Date.now();
+    await user.save();
+
+    return sendGuestSession(res, user, 200, "Welcome back");
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

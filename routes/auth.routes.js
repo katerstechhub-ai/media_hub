@@ -2,6 +2,7 @@ import express from "express";
 import {
   register,
   login,
+  guestRegister,
   guestLogin,
   logout,
   search,
@@ -20,8 +21,8 @@ import { authLimiter, forgotPasswordLimiter } from "../middleware/rateLimit.midd
 
 const router = express.Router();
 
-router.post("/register", authLimiter, register);
-router.post("/login", authLimiter, login);
+router.post("/guest/register", guestRegister);
+router.post("/guest/login", guestLogin);
 // No authLimiter here on purpose: at an event, everyone shares the venue wifi
 // IP, so a per-IP limit would lock guests out after a few entries.
 router.post("/guest", guestLogin);
