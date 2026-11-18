@@ -2,6 +2,7 @@ import express from "express";
 import {
   register,
   login,
+  guestLogin,
   logout,
   search,
   getMe,
@@ -21,10 +22,12 @@ const router = express.Router();
 
 router.post("/register", authLimiter, register);
 router.post("/login", authLimiter, login);
+// No authLimiter here on purpose: at an event, everyone shares the venue wifi
+// IP, so a per-IP limit would lock guests out after a few entries.
+router.post("/guest", guestLogin);
 router.post("/logout", protect, logout);
 router.get("/search", protect, search);
 router.get("/me", protect, getMe);
-// ✅ Public: view another user's profile (safe fields only) — must stay above "/:id"-style routes if any are added later
 router.get("/users/:id", getUserProfile);
 router.put("/me", protect, updateProfile);
 router.put("/me/avatar", protect, upload.single("avatar"), updateAvatar);

@@ -86,6 +86,40 @@ export const login = async (req, res) => {
   }
 };
 
+export const guestLogin = async (req, res) => {
+  try {
+    const name = (req.body.name || "").trim();
+
+    if (name.length < 2 || name.length > 50) {
+      return res.status(400).json({ message: "Name must be 2-50 characters" });
+    }
+
+    const id = crypto.randomBytes(8).toString("hex");
+    const hashedPassword = await bcrypt.hash(crypto.randomBytes(16).toString("hex"), 10);
+
+    const user = await User.create({
+      name,
+      email: `guest-${id}@guest.local`,
+      password: hashedPassword,
+      isOnline: true,
+    });
+
+    const token = generateToken(user._id, user.role);
+
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    res.status(201).json({
+      success: true,
+      message: "Welcome",
+      token,
+      user: userResponse,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const logout = async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { isOnline: false, lastSeen: Date.now() });
@@ -170,10 +204,6 @@ export const updateAvatar = async (req, res) => {
     user.avatarPublicId = result.public_id;
     await user.save();
 
-    // Delete the old avatar from Cloudinary now that the new one is saved.
-    // Runs after save so a failed delete never blocks the avatar update
-    // itself; if it fails we log it instead of silently losing the old
-    // asset's id.
     if (oldAvatarPublicId) {
       try {
         await cloudinary.uploader.destroy(oldAvatarPublicId, { resource_type: "image" });
@@ -302,10 +332,6 @@ export const resetPassword = async (req, res) => {
 export const deleteAccount = async (req, res) => {
   try {
     await User.findByIdAndDelete(req.user._id);
-
-    // Optional: cascade delete their content instead of leaving it orphaned
-    // await Post.deleteMany({ author: req.user._id });
-    // await Comment.deleteMany({ author: req.user._id });
 
     res.status(200).json({ success: true, message: "Account deleted successfully" });
   } catch (error) {
